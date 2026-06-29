@@ -87,6 +87,7 @@ async def node_extract_entities(state: DataPrepState) -> dict:
         max_docs=state.get("max_docs"),
         cancel_event=state.get("cancel_event"),
         on_progress=on_progress,
+        max_tokens=settings.max_extract_tokens,
     )
 
     errors = [{"filename": d["filename"], "error": d["error"]} for d in per_doc if d.get("error")]

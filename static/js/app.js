@@ -613,26 +613,42 @@ function renderAgentMsg(data) {
   const el = document.createElement("div");
   el.className = "msg-agent";
 
-  // Convert basic markdown to HTML for the answer
-  const html = simpleMarkdown(data.answer || "_(no answer)_");
+  const html = simpleMarkdown(data.answer || "_(no answer — the LLM returned an empty response. Try a more specific question or increase MAX_QUERY_TOKENS in .env)_");
   el.innerHTML = html;
 
-  // Meta pills
+  // Meta pills — chunks + communities are clickable if details are available
   const meta = document.createElement("div");
   meta.className = "meta";
-  [
+
+  const staticPills = [
     `${data.query_type?.toUpperCase()} query`,
     `${data.entities_found} entities`,
-    `${data.chunks_cited} chunks`,
-    data.communities_used ? `${data.communities_used} communities` : null,
-  ]
-    .filter(Boolean)
-    .forEach((label) => {
-      const pill = document.createElement("span");
-      pill.className = "meta-pill";
-      pill.textContent = label;
-      meta.appendChild(pill);
-    });
+  ];
+  staticPills.forEach((label) => {
+    const pill = document.createElement("span");
+    pill.className = "meta-pill";
+    pill.textContent = label;
+    meta.appendChild(pill);
+  });
+
+  if (data.chunks_cited > 0) {
+    const pill = document.createElement("span");
+    pill.className = "meta-pill clickable";
+    pill.textContent = `${data.chunks_cited} chunks`;
+    pill.title = "Click to see source chunks";
+    pill.addEventListener("click", () => openDrawer("chunks", data.chunk_details || []));
+    meta.appendChild(pill);
+  }
+
+  if (data.communities_used > 0) {
+    const pill = document.createElement("span");
+    pill.className = "meta-pill clickable";
+    pill.textContent = `${data.communities_used} communities`;
+    pill.title = "Click to see community summaries";
+    pill.addEventListener("click", () => openDrawer("communities", data.community_details || []));
+    meta.appendChild(pill);
+  }
+
   el.appendChild(meta);
 
   // Also-try chips
@@ -651,6 +667,75 @@ function renderAgentMsg(data) {
   }
 
   return el;
+}
+
+// ── Context drawer ────────────────────────────────────────────
+// Inject drawer + overlay once into the page
+const _drawerOverlay = document.createElement("div");
+_drawerOverlay.className = "drawer-overlay";
+document.body.appendChild(_drawerOverlay);
+
+const _drawer = document.createElement("div");
+_drawer.className = "context-drawer";
+_drawer.innerHTML = `
+  <div class="drawer-header">
+    <h3 id="drawer-title">Context</h3>
+    <button class="drawer-close" id="drawer-close-btn">✕</button>
+  </div>
+  <div class="drawer-body" id="drawer-body"></div>`;
+document.body.appendChild(_drawer);
+
+document.getElementById("drawer-close-btn").addEventListener("click", closeDrawer);
+_drawerOverlay.addEventListener("click", closeDrawer);
+
+function openDrawer(type, items) {
+  const title  = document.getElementById("drawer-title");
+  const body   = document.getElementById("drawer-body");
+
+  if (type === "chunks") {
+    title.textContent = `Source Chunks (${items.length})`;
+    body.innerHTML = "";
+    if (!items.length) {
+      body.innerHTML = '<p class="muted">No chunks available.</p>';
+    }
+    items.forEach((c, i) => {
+      const item = document.createElement("div");
+      item.className = "drawer-item";
+      item.innerHTML = `
+        <div class="drawer-item-label">Chunk ${i + 1}</div>
+        <div class="drawer-item-title">${escHtml(c.filename || "?")}
+          ${c.page ? ` · p.${c.page}` : ""}
+          ${c.section ? ` · ${escHtml(c.section)}` : ""}
+        </div>
+        <div class="drawer-item-text">${escHtml(c.text || "")}</div>`;
+      body.appendChild(item);
+    });
+  } else {
+    title.textContent = `Communities (${items.length})`;
+    body.innerHTML = "";
+    if (!items.length) {
+      body.innerHTML = '<p class="muted">No communities matched this query.</p>';
+    }
+    items.forEach((c) => {
+      const item = document.createElement("div");
+      item.className = "drawer-item";
+      const tags = (c.entities || []).map(e =>
+        `<span class="drawer-tag">${escHtml(e)}</span>`).join("");
+      item.innerHTML = `
+        <div class="drawer-item-label">Community ${escHtml(String(c.id))}</div>
+        ${tags ? `<div class="drawer-item-tags">${tags}</div>` : ""}
+        <div class="drawer-item-text">${escHtml(c.summary || "")}</div>`;
+      body.appendChild(item);
+    });
+  }
+
+  _drawerOverlay.classList.add("open");
+  _drawer.classList.add("open");
+}
+
+function closeDrawer() {
+  _drawerOverlay.classList.remove("open");
+  _drawer.classList.remove("open");
 }
 
 // ── Minimal markdown → HTML ──────────────────────────────────

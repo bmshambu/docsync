@@ -78,10 +78,10 @@ async def extract_one(
     chunks: list[dict],
     model: str,
     semaphore: asyncio.Semaphore,
+    max_tokens: int = 16000,
 ) -> dict:
     system, user = build_extraction_prompt(filename, _page_marked_text(chunks))
-    # json_mode=True → Gemini guarantees valid JSON output
-    chat = get_chat(model, temperature=0.0, max_tokens=8192, json_mode=True)
+    chat = get_chat(model, temperature=0.0, max_tokens=max_tokens, json_mode=True)
 
     async with semaphore:
         resp = await chat.ainvoke(
@@ -153,6 +153,7 @@ async def extract_corpus(
     max_docs: int | None = None,
     cancel_event: asyncio.Event | None = None,
     on_progress=None,
+    max_tokens: int = 16000,
 ) -> tuple[list[dict], list[dict], list[dict], bool]:
     """Extract entities/relationships for every (or up to max_docs) documents.
 
@@ -174,7 +175,7 @@ async def extract_corpus(
 
     async def _run(fname: str) -> dict:
         try:
-            return await extract_one(fname, chunks_by_doc[fname], model, semaphore)
+            return await extract_one(fname, chunks_by_doc[fname], model, semaphore, max_tokens=max_tokens)
         except Exception as exc:
             return {"filename": fname, "entities": [], "relationships": [], "error": str(exc)}
 

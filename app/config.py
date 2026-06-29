@@ -40,6 +40,8 @@ class Settings(BaseSettings):
     max_llm_concurrency: int = 5
     chunk_size: int = 400
     chunk_overlap: int = 50
+    max_extract_tokens: int = 16000   # raise if using reasoning models (o1, GPT-4.5, etc.)
+    max_query_tokens: int = 4096      # raise for longer cross-corpus comparisons
 
     # ── Storage ─────────────────────────────────────────────────
     data_dir: Path = Path("data")

@@ -1,8 +1,4 @@
-"""Query agent — retrieval + Gemini synthesis in one async call.
-
-No job queue needed: a typical query completes in 3-8 seconds, well within
-an HTTP request timeout. The router awaits this directly.
-"""
+"""Query agent — retrieval + LLM synthesis in one async call."""
 
 from __future__ import annotations
 
@@ -21,30 +17,46 @@ async def ask(
     top_chunks: int = 4,
     hops: int = 1,
 ) -> dict:
-    """Retrieve context from the graph then synthesise a cited answer with Gemini.
-
-    Returns a dict with answer text and retrieval metadata for the UI.
-    """
     context = retrieve(question, settings, query_type=query_type,
                        top_chunks=top_chunks, hops=hops)
 
     system, user = build_query_prompt(question, context)
-    chat = get_chat(settings.model_query, temperature=0.1, max_tokens=1024, json_mode=False)
+    chat = get_chat(settings.model_query, temperature=0.1,
+                    max_tokens=settings.max_query_tokens, json_mode=False)
     resp = await chat.ainvoke([SystemMessage(content=system), HumanMessage(content=user)])
     answer = resp.content if isinstance(resp.content, str) else str(resp.content)
 
-    # Pull out the "Also try:" line so the UI can render it as clickable chips
+    # Pull "Also try:" line out so the UI can render it as chips
     also_try: list[str] = []
     lines = answer.splitlines()
     for i, line in enumerate(lines):
         if line.strip().startswith("**Also try:**"):
             raw = line.replace("**Also try:**", "").strip()
-            # Split on · delimiter
             also_try = [s.strip().strip('"').strip("'") for s in raw.split("·") if s.strip()]
-            # Remove the line from the main answer
             lines.pop(i)
             break
     answer_clean = "\n".join(lines).strip()
+
+    # Build detail payloads for clickable pills
+    chunk_details = [
+        {
+            "filename": c.get("filename") or c.get("doc_id", "?"),
+            "page": c.get("page_start", "?"),
+            "section": c.get("section", ""),
+            "text": (c.get("text") or "")[:1200],
+        }
+        for c in context["top_chunks"]
+    ]
+
+    community_details = [
+        {
+            "id": cid,
+            "entities": [e.get("name", "") for e in meta.get("entities", [])[:6]],
+            "summary": (summary_text[:2000] if summary_text
+                        else "(no summary yet — run the Community Summariser tab first)"),
+        }
+        for cid, meta, summary_text in context["relevant_communities"]
+    ]
 
     return {
         "answer": answer_clean,
@@ -53,4 +65,6 @@ async def ask(
         "entities_found": len(context["matched_entities"]),
         "communities_used": len(context["relevant_communities"]),
         "chunks_cited": len(context["top_chunks"]),
+        "chunk_details": chunk_details,
+        "community_details": community_details,
     }
