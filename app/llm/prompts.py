@@ -1,0 +1,290 @@
+"""Prompts for the LLM nodes.
+
+The entity-extraction prompt encodes the exact schema from the Cowork skill
+(``skills/rfp-data-prep/SKILL.md`` + ``rfp-community-summarizer/SCHEMA.md``):
+14 entity types, 17 relationship types, and the extraction guidelines.
+"""
+
+ENTITY_TYPES = [
+    "client", "service_provider", "service", "investor", "standard", "regulator",
+    "location", "concept", "lender", "financial_instrument", "acquisition_target",
+    "technology", "exchange", "deliverable",
+]
+
+RELATION_TYPES = [
+    "requires", "issued_by", "owned_by", "governed_by", "located_in", "operates_in",
+    "has_lender", "acquired", "uses", "requires_audit_focus", "mentions",
+    "has_deliverable", "listed_on", "has_instrument", "similar_to", "part_of",
+    "has_budget",
+]
+
+EXTRACTION_SYSTEM = """You are an expert knowledge-graph extraction engine for RFP (Request for Proposal) documents.
+You read one document at a time and extract structured entities and the typed relationships between them.
+You return STRICT JSON only — no prose, no markdown fences, no commentary.
+You never invent facts that are not supported by the document text."""
+
+EXTRACTION_USER_TEMPLATE = """Extract entities and relationships from the RFP document below.
+
+# Entity types (use exactly these strings for "type")
+{entity_types}
+
+# Relationship types (use exactly these strings for "relation_type")
+{relation_types}
+
+# Output format — return ONLY this JSON object, nothing else:
+{{
+  "entities": [
+    {{
+      "id": "snake_case_unique_id",
+      "name": "Human readable name",
+      "type": "one of the entity types above",
+      "aliases": ["alternative names"],
+      "source_docs": ["{filename}"],
+      "attributes": {{ "key": "value pairs relevant to the type" }}
+    }}
+  ],
+  "relationships": [
+    {{
+      "source": "entity_id",
+      "target": "entity_id",
+      "relation_type": "one of the relationship types above",
+      "source_doc": "{filename}",
+      "page": 1,
+      "description": "optional one-line context"
+    }}
+  ]
+}}
+
+# Extraction guidelines
+- Extract every named entity that has a meaningful relationship to something else — do not extract isolated mentions.
+- For standards (IFRS, ISA, IAS, SOX, ISQM, IESBA, ISSB, CSRD, etc.) always create a `standard` entity.
+- For locations, extract a country/city only if an entity operates in or is located there.
+- For concepts, extract audit focus areas, complex accounting topics, and reporting themes.
+- Use snake_case for all entity IDs; replace spaces and special chars with `_`.
+- Every `source` and `target` in relationships MUST refer to an `id` you defined in `entities`.
+- For any fee budget / cost estimate, create a `financial_instrument` entity and link the relevant `service` to it with `has_budget`.
+- Set `source_docs` / `source_doc` to "{filename}" for everything you extract here.
+- Use the `page` numbers given in the [page=N] markers in the text.
+
+# Document filename: {filename}
+
+# Document text:
+{document_text}
+"""
+
+
+def build_extraction_prompt(filename: str, document_text: str) -> tuple[str, str]:
+    """Return (system, user) messages for entity extraction of one document."""
+    user = EXTRACTION_USER_TEMPLATE.format(
+        entity_types=", ".join(ENTITY_TYPES),
+        relation_types=", ".join(RELATION_TYPES),
+        filename=filename,
+        document_text=document_text,
+    )
+    return EXTRACTION_SYSTEM, user
+
+
+# ── Community summariser prompts ──────────────────────────────────────────────
+
+SUMMARY_SYSTEM = """You are a knowledge-graph analyst writing structured community summaries for an RFP analysis system.
+Each summary will be used by an AI query agent to answer cross-corpus questions without loading source documents.
+Write in clear, professional prose. Be specific — name entities, reference standards by code, cite source documents.
+Return ONLY the markdown — no preamble, no trailing commentary, no code fences."""
+
+
+SUMMARY_USER_TEMPLATE = """Write a structured community summary for the graph cluster below.
+
+## Community {comm_id} — Member entities ({entity_count} total)
+
+{entity_table}
+
+## Internal relationships ({internal_count})
+
+{internal_rels}
+
+## Cross-community connections (top {cross_count})
+
+{cross_rels}
+
+## Source document excerpts (top chunks by relevance)
+
+{chunk_excerpts}
+
+---
+
+Write the summary using EXACTLY this markdown structure (aim for 300–600 words total):
+
+# Community {comm_id} — [Descriptive Theme Title]
+
+## Theme
+[2-3 sentences: what is the connecting thread between these entities? Be specific — name the key entities and what binds them. Do NOT just list names.]
+
+## Source RFPs
+[Bullet list: one line per document. Mark "primary" if the community's main entities come from it, "partial" if only mentioned.]
+
+## Key Entities
+[Group by type. Within each group, list the most important first. Use bold for entity names.]
+
+## [1-3 domain-specific sections with descriptive titles]
+[Choose titles relevant to the community theme — e.g. "Audit Standards", "Technology Stack", "Geographic Footprint", "Financial Structure", "ESG & Regulatory Framework", "Deliverables".]
+[For standards: use a markdown table — Standard | Scope | Why it matters.]
+[For geography: bullet list of countries/regions with brief context.]
+[For technology: bullet list of systems with their role.]
+
+## Cross-community Connections
+[Name the connected communities by number (e.g. "Community 3") and their theme. One bullet per connection. Explain what links them.]
+
+## Strategic Significance
+[1-2 sentences on why this cluster matters for RFP analysis or proposal work — what capability, risk area, or market segment it signals.]
+"""
+
+
+# ── Query agent prompts ───────────────────────────────────────────────────────
+
+QUERY_SYSTEM = """You are an expert RFP knowledge-graph query agent.
+You answer questions about RFP documents using ONLY the structured context provided below.
+You never invent facts not present in the context.
+You are concise and precise — no filler, no introductory preamble."""
+
+QUERY_USER_TEMPLATE = """Answer the question using ONLY the context provided.
+
+# Question
+{question}
+
+# Query type: {query_type}
+
+## Matched entities ({entity_count})
+{entities_block}
+
+## Relevant relationships ({rel_count})
+{rels_block}
+
+## Community summaries ({comm_count})
+{communities_block}
+
+## Source chunks ({chunk_count})
+{chunks_block}
+
+---
+
+Answer rules:
+- Start directly with the answer — no "Based on the graph…" preamble
+- Cite every fact inline: *(filename.docx, p.N)* or *(Community N)*
+- Use a markdown **table** when comparing 2+ items across 2+ attributes
+- Use **bullet points** for 2-5 discrete facts; prose for a single-sentence answer
+- Keep prose under ~150 words (table rows excluded)
+- If the context is insufficient: "Graph doesn't have enough on [topic] — add more RFPs and re-run data prep."
+- End with exactly: **Also try:** "[follow-up 1]" · "[follow-up 2]"
+"""
+
+
+def build_query_prompt(question: str, context: dict) -> tuple[str, str]:
+    """Return (system, user) for query synthesis from retrieval context."""
+    entities  = context.get("matched_entities", [])
+    rels      = context.get("traversal", {}).get("relationships", [])
+    comms     = context.get("relevant_communities", [])   # (cid, meta, text)
+    chunks    = context.get("top_chunks", [])
+
+    # Entities block
+    ent_lines = [
+        f"- **{e.get('name', e['id'])}** [{e.get('type','?')}] "
+        f"(source: {', '.join(e.get('source_docs') or [])})"
+        for e in entities[:8]
+    ]
+    entities_block = "\n".join(ent_lines) or "_(none matched)_"
+
+    # Relationships block
+    seen: set = set()
+    rel_lines = []
+    for r in rels[:15]:
+        key = f"{r.get('source')}→{r.get('target')}"
+        if key not in seen:
+            seen.add(key)
+            rel_lines.append(
+                f"- {r.get('source')} **{r.get('relation_type','→')}** {r.get('target')}"
+                f"  *(doc: {r.get('source_doc','?')}, p.{r.get('page','?')})*"
+            )
+    rels_block = "\n".join(rel_lines) or "_(none)_"
+
+    # Communities block
+    comm_lines = []
+    for cid, meta, summary_text in comms:
+        entities_preview = ", ".join(e["name"] for e in meta.get("entities", [])[:4])
+        excerpt = summary_text[:800].strip() if summary_text else "(no summary yet)"
+        comm_lines.append(
+            f"### Community {cid}\n"
+            f"Key entities: {entities_preview}\n\n"
+            f"{excerpt}{'…' if len(summary_text) > 800 else ''}"
+        )
+    communities_block = "\n\n".join(comm_lines) or "_(none matched)_"
+
+    # Chunks block
+    chunk_lines = []
+    for c in chunks:
+        chunk_lines.append(
+            f"**{c.get('filename','?')} | p.{c.get('page_start','?')} | {c.get('section','')}**\n"
+            f"> {(c.get('text') or '')[:500]}…"
+        )
+    chunks_block = "\n\n".join(chunk_lines) or "_(none matched)_"
+
+    user = QUERY_USER_TEMPLATE.format(
+        question=question,
+        query_type=context.get("query_type", "auto").upper(),
+        entity_count=len(entities),
+        entities_block=entities_block,
+        rel_count=len(rels),
+        rels_block=rels_block,
+        comm_count=len(comms),
+        communities_block=communities_block,
+        chunk_count=len(chunks),
+        chunks_block=chunks_block,
+    )
+    return QUERY_SYSTEM, user
+
+
+def build_summary_prompt(
+    comm_id: str,
+    entities: list[dict],
+    internal_rels: list[dict],
+    cross_rels: list[dict],
+    chunk_excerpts: list[dict],
+) -> tuple[str, str]:
+    """Build (system, user) messages for summarising one community."""
+
+    # Entity table
+    rows = []
+    for e in entities:
+        docs = ", ".join(e.get("source_docs") or [])
+        attrs = "; ".join(f"{k}={v}" for k, v in (e.get("attributes") or {}).items())
+        rows.append(f"- **{e.get('name', e['id'])}** [{e.get('type', '?')}] | {docs}" +
+                    (f" | {attrs}" if attrs else ""))
+    entity_table = "\n".join(rows) if rows else "_(no entities)_"
+
+    # Internal relationships
+    def _rel_line(r):
+        return (f"- {r.get('source')} **{r.get('relation_type','→')}** {r.get('target')}"
+                f"  *(doc: {r.get('source_doc','?')}, p.{r.get('page','?')})*")
+
+    internal_block = "\n".join(_rel_line(r) for r in internal_rels[:20]) or "_(none)_"
+    cross_block    = "\n".join(_rel_line(r) for r in cross_rels[:10]) or "_(none)_"
+
+    # Chunk excerpts
+    chunk_block_parts = []
+    for c in chunk_excerpts:
+        excerpt = (c.get("text") or "")[:600].strip()
+        chunk_block_parts.append(
+            f"**{c.get('filename','?')} | p.{c.get('page_start','?')} | {c.get('section','')}**\n> {excerpt}…"
+        )
+    chunk_block = "\n\n".join(chunk_block_parts) if chunk_block_parts else "_(no chunks found)_"
+
+    user = SUMMARY_USER_TEMPLATE.format(
+        comm_id=comm_id,
+        entity_count=len(entities),
+        entity_table=entity_table,
+        internal_count=len(internal_rels),
+        internal_rels=internal_block,
+        cross_count=len(cross_rels),
+        cross_rels=cross_block,
+        chunk_excerpts=chunk_block,
+    )
+    return SUMMARY_SYSTEM, user
