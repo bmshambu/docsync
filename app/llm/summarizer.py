@@ -199,7 +199,15 @@ async def summarise_corpus(
                 semaphore=semaphore,
             )
         except Exception as exc:
-            return {"comm_id": cid, "error": str(exc)}
+            # Write a stub file so the community is still listed in the UI
+            communities_dir.mkdir(parents=True, exist_ok=True)
+            stub_file = communities_dir / f"community_{int(cid):02d}.md"
+            stub_file.write_text(
+                f"# Community {cid} — Summary Unavailable\n\n"
+                f"_(Error generating summary: {exc})_\n",
+                encoding="utf-8",
+            )
+            return {"comm_id": cid, "error": str(exc), "file": str(stub_file)}
 
     tasks = [asyncio.create_task(_run(cid)) for cid in comm_ids]
 

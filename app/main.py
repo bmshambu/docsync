@@ -60,5 +60,7 @@ async def index(request: Request):
             "model_label": settings.active_model_label,
             "provider": settings.llm_provider,
             "api_key_set": settings.api_key_set,
+            "blob_mode": settings.blob_mode,
+            "blob_container": settings.azure_storage_container_name,
         },
     )

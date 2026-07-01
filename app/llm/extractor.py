@@ -8,6 +8,8 @@ Fixes vs original:
     docs, partial results are written to disk, and the graph still builds.
   - Incremental write: entities/relationships flushed to disk after every document
     so a cancelled run always leaves a valid (partial) graph on disk.
+  - Skip already-extracted docs: if entities_file already contains entries from a
+    document (matched via source_docs), that document is not re-sent to the LLM.
 """
 
 from __future__ import annotations
@@ -135,9 +137,40 @@ def _save_incremental(
     per_doc: list[dict],
     entities_file: Path,
     relationships_file: Path,
+    extra_entities: list[dict] | None = None,
+    extra_relationships: list[dict] | None = None,
 ) -> tuple[list[dict], list[dict]]:
-    """Merge + write entities/relationships to disk after each doc."""
-    entities, relationships = merge_entities(per_doc)
+    """Merge per_doc results with any pre-existing (already-extracted) data and write to disk."""
+    new_entities, new_relationships = merge_entities(per_doc)
+
+    if extra_entities:
+        # Merge new entities into the existing set
+        entities_by_id: dict[str, dict] = {e["id"]: dict(e) for e in extra_entities}
+        for e in new_entities:
+            eid = e.get("id")
+            if not eid:
+                continue
+            if eid in entities_by_id:
+                ex = entities_by_id[eid]
+                ex["aliases"] = sorted(set(ex.get("aliases") or []) | set(e.get("aliases") or []))
+                ex["source_docs"] = sorted(set(ex.get("source_docs") or []) | set(e.get("source_docs") or []))
+                ex["attributes"] = {**(ex.get("attributes") or {}), **(e.get("attributes") or {})}
+            else:
+                entities_by_id[eid] = e
+        entities = list(entities_by_id.values())
+
+        # Deduplicate relationships by (source, target, relation_type, source_doc)
+        seen_rels: set = set()
+        all_rels: list[dict] = []
+        for r in (extra_relationships or []) + new_relationships:
+            key = (r.get("source"), r.get("target"), r.get("relation_type"), r.get("source_doc"))
+            if key not in seen_rels:
+                seen_rels.add(key)
+                all_rels.append(r)
+        relationships = all_rels
+    else:
+        entities, relationships = new_entities, new_relationships
+
     entities_file.parent.mkdir(parents=True, exist_ok=True)
     entities_file.write_text(json.dumps(entities, indent=2, ensure_ascii=False), encoding="utf-8")
     relationships_file.write_text(json.dumps(relationships, indent=2, ensure_ascii=False), encoding="utf-8")
@@ -157,7 +190,8 @@ async def extract_corpus(
 ) -> tuple[list[dict], list[dict], list[dict], bool]:
     """Extract entities/relationships for every (or up to max_docs) documents.
 
-    Writes incrementally to disk after each doc.
+    Skips documents whose entities are already on disk (matched via source_docs).
+    Writes incrementally to disk after each new doc.
     Returns (entities, relationships, per_doc_results, was_cancelled).
     """
     chunks_by_doc = _load_chunks_by_doc(chunks_dir)
@@ -165,13 +199,40 @@ async def extract_corpus(
     if max_docs:
         filenames = filenames[:max_docs]
 
-    total = len(filenames)
+    # Load existing entities/relationships from disk (for skip logic)
+    existing_entities: list[dict] = []
+    existing_relationships: list[dict] = []
+    already_extracted: set[str] = set()
+    if entities_file.exists():
+        try:
+            existing_entities = json.loads(entities_file.read_text(encoding="utf-8"))
+            for e in existing_entities:
+                for fname in (e.get("source_docs") or []):
+                    already_extracted.add(fname)
+        except Exception:
+            pass
+    if relationships_file.exists():
+        try:
+            existing_relationships = json.loads(relationships_file.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+
+    # Only process docs not already extracted
+    new_filenames = [f for f in filenames if f not in already_extracted]
+    skipped_count = len(filenames) - len(new_filenames)
+
+    if not new_filenames:
+        if on_progress:
+            on_progress(0, 0, f"(all {skipped_count} doc(s) already extracted — skipped)", None)
+        return existing_entities, existing_relationships, [], False
+
+    total = len(new_filenames)
     semaphore = asyncio.Semaphore(max_concurrency)
     per_doc: list[dict] = []
     done = 0
     was_cancelled = False
-    entities: list[dict] = []
-    relationships: list[dict] = []
+    entities: list[dict] = list(existing_entities)
+    relationships: list[dict] = list(existing_relationships)
 
     async def _run(fname: str) -> dict:
         try:
@@ -179,13 +240,12 @@ async def extract_corpus(
         except Exception as exc:
             return {"filename": fname, "entities": [], "relationships": [], "error": str(exc)}
 
-    tasks = {asyncio.create_task(_run(f)): f for f in filenames}
+    tasks = {asyncio.create_task(_run(f)): f for f in new_filenames}
 
     for coro in asyncio.as_completed(list(tasks)):
         # Check for cancellation before accepting each result
         if cancel_event and cancel_event.is_set():
             was_cancelled = True
-            # Cancel all tasks still waiting on the semaphore
             for t in tasks:
                 t.cancel()
             break
@@ -194,13 +254,21 @@ async def extract_corpus(
         per_doc.append(result)
         done += 1
 
-        # Incremental write — even a cancelled run leaves a valid partial graph
-        entities, relationships = _save_incremental(per_doc, entities_file, relationships_file)
+        # Merge with pre-existing entities and write incrementally
+        entities, relationships = _save_incremental(
+            per_doc, entities_file, relationships_file,
+            extra_entities=existing_entities,
+            extra_relationships=existing_relationships,
+        )
 
         if on_progress:
             on_progress(done, total, result.get("filename"), result.get("error"))
 
-    # If no docs at all, write empty files so downstream nodes don't crash
+    # If we finished all queued docs (cancel fired after last one completed), it's not partial
+    if done >= total:
+        was_cancelled = False
+
+    # If no entities file at all (empty corpus), write empty files
     if not entities_file.exists():
         _save_incremental([], entities_file, relationships_file)
 

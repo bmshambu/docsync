@@ -33,17 +33,19 @@ let totalDocCount   = 0;
 let currentJobId    = null;
 let pollTimer       = null;
 
-// ── Step 1: Scan folder ──────────────────────────────────────────
+// ── Step 1: Scan folder / blob container ─────────────────────────
 scanBtn.addEventListener("click", async () => {
   const folder = folderInput.value.trim();
-  if (!folder) { folderInput.focus(); return; }
+  if (!window.BLOB_MODE && !folder) { folderInput.focus(); return; }
 
+  const blobMode = window.BLOB_MODE;
   scanBtn.disabled = true;
-  scanBtn.textContent = "Scanning…";
+  scanBtn.textContent = blobMode ? "Scanning container…" : "Scanning…";
   scanResult.classList.add("hidden");
 
   try {
-    const res = await fetch("/api/data-prep/scan?" + new URLSearchParams({ folder_path: folder }));
+    const params = blobMode ? {} : { folder_path: folder };
+    const res = await fetch("/api/data-prep/scan?" + new URLSearchParams(params));
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
     renderScanResult(data);
@@ -51,7 +53,7 @@ scanBtn.addEventListener("click", async () => {
     alert("Scan error: " + err.message);
   } finally {
     scanBtn.disabled = false;
-    scanBtn.textContent = "Scan folder";
+    scanBtn.textContent = blobMode ? "Scan container" : "Scan folder";
   }
 });
 
@@ -101,7 +103,7 @@ function makeBatchBtn(label, maxDocs) {
 // ── Step 2: Run ──────────────────────────────────────────────────
 runBtn.addEventListener("click", async () => {
   const folder = folderInput.value.trim();
-  if (!folder) return;
+  if (!window.BLOB_MODE && !folder) return;
 
   runBtn.disabled = true;
   runBtn.textContent = "Running…";
@@ -196,10 +198,11 @@ function setProgress(pct, stage) {
 }
 
 function prettyStage(stage) {
+  const ml = window.MODEL_LABEL || "LLM";
   return {
     start:            "Starting…",
     extract_text:     "Extracting text + chunks",
-    extract_entities: "Extracting entities with Gemini",
+    extract_entities: `Extracting entities with ${ml}`,
     build_graph:      "Building graph + communities",
     generate_html:    "Generating visualisation",
     cancelling:       "Stopping — finishing in-flight docs…",
@@ -240,6 +243,8 @@ function renderResult(result) {
 
   const graphBtn = document.getElementById("view-graph");
   graphBtn.style.display = stats.nodes ? "" : "none";
+  const rebuildBtn2 = document.getElementById("rebuild-graph-btn");
+  if (rebuildBtn2) rebuildBtn2.style.display = "";
 
   resultCard.classList.remove("hidden");
 }
@@ -247,7 +252,42 @@ function renderResult(result) {
 function resetRunBtn() {
   runBtn.disabled = false;
   runBtn.textContent = "Run data prep";
+  const rebuildBtn = document.getElementById("rebuild-graph-btn");
+  if (rebuildBtn) { rebuildBtn.disabled = false; rebuildBtn.textContent = "Rebuild graph"; }
 }
+
+// ── Rebuild graph (no LLM re-extraction) ─────────────────────
+document.getElementById("rebuild-graph-btn")?.addEventListener("click", async () => {
+  const rebuildBtn = document.getElementById("rebuild-graph-btn");
+  rebuildBtn.disabled = true;
+  rebuildBtn.textContent = "Rebuilding…";
+  runBtn.disabled = true;
+  stopBtn.disabled = true;
+  resultCard.classList.add("hidden");
+  partialBadge.classList.add("hidden");
+  progressCard.classList.remove("hidden");
+  logEl.textContent = "";
+  setProgress(0, "Rebuilding graph…");
+
+  try {
+    const resolution = parseFloat(document.getElementById("resolution").value) || 1.0;
+    const res = await fetch("/api/data-prep/build-graph", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ resolution }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || `HTTP ${res.status}`);
+    }
+    const data = await res.json();
+    currentJobId = data.job_id;
+    pollStatus(currentJobId);
+  } catch (err) {
+    appendLog("ERROR: " + err.message);
+    resetRunBtn();
+  }
+});
 
 // ═══════════════════════════════════════════════════════════════
 // ── TAB 2: Community Summariser ──────────────────────────────
@@ -418,10 +458,11 @@ function setCommProgress(pct, stage) {
 }
 
 function prettyCommStage(stage) {
+  const ml = window.MODEL_LABEL || "LLM";
   return {
     start:      "Starting…",
     validate:   "Checking prerequisites",
-    summarise:  "Summarising communities with Gemini",
+    summarise:  `Summarising communities with ${ml}`,
     cancelling: "Stopping — finishing in-flight summaries…",
     done:       "Complete",
     error:      "Error",

@@ -68,7 +68,7 @@ async def node_summarise(state: CommunitySummaryState) -> dict:
               f"[{done}/{total}] Community {comm_id} — {note}",
               progress=frac, stage="summarise")
 
-    _emit(state, "Calling Gemini for each community…", progress=0.05, stage="summarise")
+    _emit(state, f"Calling {settings.active_model_label} for each community…", progress=0.05, stage="summarise")
 
     results, was_cancelled = await summarise_corpus(
         community_map_file=settings.community_map_file,

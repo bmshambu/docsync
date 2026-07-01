@@ -70,10 +70,13 @@ def node_extract_text(state: DataPrepState) -> dict:
 
 async def node_extract_entities(state: DataPrepState) -> dict:
     settings = get_settings()
-    _emit(state, "Extracting entities + relationships with Gemini …",
+    _emit(state, f"Extracting entities + relationships with {settings.active_model_label} …",
           progress=0.27, stage="extract_entities")
 
     def on_progress(done, total, fname, error):
+        if total == 0:
+            _emit(state, f"{fname}", progress=0.83, stage="extract_entities")
+            return
         frac = 0.27 + 0.55 * (done / total)
         note = f"ERROR: {error}" if error else "ok"
         _emit(state, f"[{done}/{total}] {fname} — {note}", progress=frac, stage="extract_entities")
@@ -187,3 +190,52 @@ async def run_data_prep(
         "max_docs": max_docs,
     }
     return await DATA_PREP_GRAPH.ainvoke(initial)
+
+
+# ── Build-only (no LLM re-extraction) ────────────────────────────────────────
+
+async def run_build_only(
+    emit=None,
+    resolution: float = 1.0,
+) -> dict:
+    """Rebuild graph + HTML from existing entities.json without re-running the LLM."""
+    settings = get_settings()
+
+    def _e(msg, progress=None, stage=None):
+        if emit:
+            emit(msg, progress=progress, stage=stage)
+
+    _e("Building knowledge graph + detecting communities …", progress=0.1, stage="build_graph")
+
+    if not settings.entities_file.exists() or settings.entities_count_on_disk() == 0:
+        _e("No entities found — run full data prep first.", progress=1.0, stage="done")
+        return {"stats": {}, "html_path": "", "was_cancelled": False,
+                "entities_count": 0, "relationships_count": 0}
+
+    stats = graph_build.build_and_save(
+        entities_file=settings.entities_file,
+        relationships_file=settings.relationships_file,
+        community_map_file=settings.community_map_file,
+        graph_stats_file=settings.graph_stats_file,
+        resolution=resolution,
+    )
+    _e(f"Graph: {stats['nodes']} nodes, {stats['edges']} edges, "
+       f"{stats['communities']} communities.", progress=0.6, stage="build_graph")
+
+    _e("Generating interactive graph visualisation …", progress=0.7, stage="generate_html")
+    out = graph_html.generate_graph_html(
+        entities_file=settings.entities_file,
+        relationships_file=settings.relationships_file,
+        community_map_file=settings.community_map_file,
+        communities_dir=settings.communities_dir,
+        out_file=settings.graph_html_file,
+    )
+
+    _e("Graph rebuild complete.", progress=1.0, stage="done")
+    return {
+        "stats": stats,
+        "html_path": str(out),
+        "was_cancelled": False,
+        "entities_count": stats.get("entities", 0),
+        "relationships_count": stats.get("relationships", 0),
+    }

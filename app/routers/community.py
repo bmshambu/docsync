@@ -112,8 +112,13 @@ async def summaries():
         text = md_file.read_text(encoding="utf-8")
         title = md_file.stem
         for line in text.splitlines():
-            if line.startswith("# "):
-                title = line[2:].strip()
+            stripped = line.strip()
+            if stripped.startswith("# "):
+                title = stripped[2:].strip()
+                break
+            # Handle heading with no trailing space, or single # without space
+            if stripped.startswith("#") and not stripped.startswith("##") and len(stripped) > 1:
+                title = stripped.lstrip("#").strip()
                 break
         items.append({"file": md_file.name, "title": title, "preview": text[:400].strip()})
     return {"summaries": items}

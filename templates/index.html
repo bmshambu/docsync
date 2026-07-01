@@ -10,11 +10,20 @@
 <!-- ── TAB 1: DATA PREP ─────────────────────────────────────────── -->
 <section class="panel active" id="tab-data-prep">
 
-  <!-- Step A: scan folder -->
+  <!-- Step A: scan folder / blob container -->
   <div class="card" id="scan-card">
+    {% if blob_mode %}
+    <h2>1 · Scan Azure Blob container</h2>
+    <p class="muted">Documents are read from Azure Blob Storage. Click scan to list the available RFPs.</p>
+    <div class="blob-source-row">
+      <span class="pill ok" style="font-size:12px">Azure Blob</span>
+      <span class="blob-container-name">{{ blob_container }}</span>
+    </div>
+    <input type="hidden" id="folder-path" value="" />
+    <button class="btn primary" id="scan-btn" style="margin-top:14px">Scan container</button>
+    {% else %}
     <h2>1 · Scan your RFP folder</h2>
     <p class="muted">Enter the folder path and scan it first to see what documents are available.</p>
-
     <div class="input-row">
       <input
         type="text"
@@ -24,7 +33,8 @@
       />
       <button class="btn primary" id="scan-btn">Scan folder</button>
     </div>
-    <p class="hint">Local server path for now · Azure Blob path support coming later</p>
+    <p class="hint">Local server path · set AZURE_STORAGE_CONNECTION_STRING in .env to switch to blob</p>
+    {% endif %}
 
     <!-- Scan result (hidden until scanned) -->
     <div id="scan-result" class="hidden">
@@ -71,9 +81,14 @@
     </div>
     <div class="stats-grid" id="stats-grid"></div>
     <div id="errors-block"></div>
-    <a class="btn" id="view-graph" href="/api/data-prep/graph-html" target="_blank" rel="noopener">
-      Open interactive knowledge graph ↗
-    </a>
+    <div class="btn-row">
+      <a class="btn" id="view-graph" href="/api/data-prep/graph-html" target="_blank" rel="noopener">
+        Open interactive knowledge graph ↗
+      </a>
+      <button class="btn secondary" id="rebuild-graph-btn" title="Rebuild graph + communities from existing entities (no LLM re-extraction)">
+        Rebuild graph
+      </button>
+    </div>
   </div>
 
 </section>

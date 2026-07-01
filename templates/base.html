@@ -27,6 +27,11 @@
     {% block content %}{% endblock %}
   </main>
 
+  <script>
+    window.MODEL_LABEL      = {{ model_label | tojson }};
+    window.BLOB_MODE        = {{ blob_mode | tojson }};
+    window.BLOB_CONTAINER   = {{ blob_container | tojson }};
+  </script>
   {% block scripts %}{% endblock %}
 </body>
 </html>

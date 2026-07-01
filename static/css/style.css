@@ -105,6 +105,8 @@ body {
 }
 .form input[type="text"]:focus { outline: none; border-color: var(--accent); }
 .hint { font-size: 11px; color: var(--muted); margin: 6px 0 14px; }
+.blob-source-row { display: flex; align-items: center; gap: 10px; margin: 10px 0 4px; }
+.blob-container-name { font-family: monospace; font-size: 13px; color: var(--text); background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px; padding: 4px 10px; }
 
 .form-row {
   display: flex;
@@ -141,6 +143,10 @@ body {
 .btn.primary { background: var(--accent); color: #06203f; border-color: var(--accent); font-weight: 600; }
 .btn.primary:hover { background: var(--accent-2); }
 .btn.primary:disabled { opacity: .5; cursor: not-allowed; }
+.btn.secondary { border-color: #3a4a5c; color: var(--muted); }
+.btn.secondary:hover { border-color: var(--accent); color: var(--text); }
+.btn.secondary:disabled { opacity: .4; cursor: not-allowed; }
+.btn-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 
 /* ── Progress ───────────────────────────────────────── */
 .progress-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px; }

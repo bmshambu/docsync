@@ -46,6 +46,11 @@ class Settings(BaseSettings):
     # ── Storage ─────────────────────────────────────────────────
     data_dir: Path = Path("data")
 
+    # ── Azure Blob Storage (document source) ────────────────────
+    # Set both to switch from local folder to blob container as input source
+    azure_storage_connection_string: str = ""
+    azure_storage_container_name: str = ""
+
     # ── Derived path helpers ────────────────────────────────────
     @property
     def extracted_text_dir(self) -> Path:
@@ -84,6 +89,16 @@ class Settings(BaseSettings):
         return self.graph_dir / "knowledge_graph.html"
 
     @property
+    def blob_mode(self) -> bool:
+        """True when Azure Blob Storage is configured as the document source."""
+        return bool(self.azure_storage_connection_string and self.azure_storage_container_name)
+
+    @property
+    def blob_cache_dir(self) -> Path:
+        """Local directory where downloaded blobs are cached between runs."""
+        return self.data_dir / "blob_cache"
+
+    @property
     def api_key_set(self) -> bool:
         if self.llm_provider == "azure_openai":
             return bool(self.azure_openai_api_key and self.azure_openai_endpoint)
@@ -107,12 +122,15 @@ class Settings(BaseSettings):
 
     def ensure_dirs(self) -> None:
         """Create the working-directory tree if it does not exist."""
-        for d in (
+        dirs = [
             self.extracted_text_dir,
             self.chunks_dir,
             self.graph_dir,
             self.communities_dir,
-        ):
+        ]
+        if self.blob_mode:
+            dirs.append(self.blob_cache_dir)
+        for d in dirs:
             d.mkdir(parents=True, exist_ok=True)
 
 
